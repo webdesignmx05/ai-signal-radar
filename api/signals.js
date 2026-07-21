@@ -1,6 +1,6 @@
 import { loadSignals } from "../server/loadSignals.js";
 
-export default async function handler() {
+export async function GET() {
   try {
     const result = await loadSignals({
       csvUrl: process.env.SHEET_CSV_URL,
