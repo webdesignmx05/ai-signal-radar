@@ -1,0 +1,29 @@
+AI SIGNAL RADAR V2 VERCEL PATCH
+
+Copy the contents of this patch into the ROOT of the local v2-instant-tavily branch.
+Allow Windows to merge folders and replace files.
+
+Files replaced:
+- api/signals.js
+- src/App.jsx
+- src/components/SignalCard.jsx
+- src/styles.css
+- vite.config.js
+- .env.example
+
+Files added:
+- api/submit.js
+- api/status.js
+- server/v2Data.js
+- server/submitRequest.js
+- server/sampleSignalsV2.js
+
+The file src/styles-v2-additions.css is included only as a reference showing the new V2 rules.
+The full replacement src/styles.css already includes those rules; do not append them again.
+
+Local .env.local values:
+MAKE_WEBHOOK_URL=<private Make webhook URL>
+PUBLIC_REQUEST_STATUS_V2_CSV_URL=<published Public_Request_Status_V2 CSV URL>
+PUBLIC_SIGNALS_V2_CSV_URL=<published Public_Signals_V2 CSV URL>
+USE_SAMPLE_DATA=false
+VITE_GITHUB_URL=https://github.com/webdesignmx05/ai-signal-radar

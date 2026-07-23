@@ -1,22 +1,36 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MetricCard from "./components/MetricCard.jsx";
 import SignalCard from "./components/SignalCard.jsx";
+import TurnstileWidget from "./components/TurnstileWidget.jsx";
 
-const formUrl = import.meta.env.VITE_RESEARCH_FORM_URL || "";
 const githubUrl = import.meta.env.VITE_GITHUB_URL || "";
+
+const turnstileSiteKey =
+  import.meta.env.VITE_TURNSTILE_SITE_KEY || "";
+
+const TOPICS = [
+  "AI for everyday work and productivity",
+  "AI for small business and customer service",
+  "AI for marketing, sales and content",
+  "AI for education and learning",
+  "AI in healthcare and wellness",
+  "AI for creativity, music and media",
+  "AI for accessibility and independent living",
+  "AI for job searching and career development",
+  "AI for money, shopping and personal planning",
+  "AI for software and workflow automation"
+];
+
+const REQUEST_TYPES = [
+  "A practical step-by-step plan",
+  "Recent examples or news",
+  "Tools and resources to try",
+  "Risks and important considerations",
+  "Ideas for a small project or automation"
+];
 
 function parseDate(value) {
   if (!value) return null;
-
-  const compact = String(value).match(
-    /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/
-  );
-
-  if (compact) {
-    const [, year, month, day, hour, minute, second] = compact;
-    return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`);
-  }
-
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
 }
@@ -32,48 +46,168 @@ function formatDate(value, fallback = "Date unavailable") {
   }).format(date);
 }
 
+function finalStatus(status) {
+  return ["completed", "insufficient_sources", "failed"].includes(status);
+}
+
+const PAGE_SIZE = 6;
+
+function pageItems(currentPage, totalPages) {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const items = [1];
+  const rangeStart = Math.max(2, currentPage - 1);
+  const rangeEnd = Math.min(totalPages - 1, currentPage + 1);
+
+  if (rangeStart > 2) items.push("start-ellipsis");
+  for (let page = rangeStart; page <= rangeEnd; page += 1) items.push(page);
+  if (rangeEnd < totalPages - 1) items.push("end-ellipsis");
+  items.push(totalPages);
+
+  return items;
+}
+
 export default function App() {
   const [signals, setSignals] = useState([]);
   const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
-  const [topic, setTopic] = useState("all");
+  const [topicFilter, setTopicFilter] = useState("all");
   const [minimumScore, setMinimumScore] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
+
+  const [form, setForm] = useState({
+    topic: TOPICS[0],
+    request_type: REQUEST_TYPES[0],
+    business_question: "",
+    website: ""
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [requestState, setRequestState] = useState(null);
+  const pollTimer = useRef(null);
+
+  const loadSignals = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+      const response = await fetch("/api/signals", {
+        headers: { Accept: "application/json" },
+        cache: "no-store"
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || payload.error || "The data request failed.");
+      setSignals(Array.isArray(payload.signals) ? payload.signals : []);
+      setMeta(payload.meta || null);
+    } catch (loadError) {
+      setError(loadError.message || "Unable to load answers.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const controller = new AbortController();
+    loadSignals();
+    return () => clearTimeout(pollTimer.current);
+  }, [loadSignals]);
 
-    async function load() {
-      try {
-        setLoading(true);
-        setError("");
-
-        const response = await fetch("/api/signals", {
-          signal: controller.signal,
-          headers: { Accept: "application/json" }
-        });
-
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(payload.detail || payload.error || "The data request failed.");
-        }
-
-        setSignals(Array.isArray(payload.signals) ? payload.signals : []);
-        setMeta(payload.meta || null);
-      } catch (loadError) {
-        if (loadError.name !== "AbortError") {
-          setError(loadError.message || "Unable to load signals.");
-        }
-      } finally {
-        setLoading(false);
+  const pollStatus = useCallback(async (requestId, attempt = 0) => {
+    try {
+      const response = await fetch(`/api/status?request_id=${encodeURIComponent(requestId)}`, {
+        headers: { Accept: "application/json" },
+        cache: "no-store"
+      });
+      const payload = await response.json();
+      if (!response.ok && response.status !== 202) {
+        throw new Error(payload.detail || payload.error || "Status check failed.");
       }
-    }
 
-    load();
-    return () => controller.abort();
-  }, []);
+      setRequestState(payload);
+
+      if (finalStatus(payload.status)) {
+        if (payload.signal) {
+          setSignals((current) => {
+            const remaining = current.filter((item) => item.request_id !== payload.signal.request_id);
+            return [payload.signal, ...remaining];
+          });
+        } else {
+          await loadSignals();
+        }
+        setCurrentPage(1);
+        if (payload.signal?.request_id) {
+          window.setTimeout(() => {
+            window.location.hash = `answer-${payload.signal.request_id}`;
+          }, 0);
+        }
+        setSubmitting(false);
+        return;
+      }
+
+      if (attempt >= 39) {
+        setSubmitting(false);
+        setRequestState((current) => ({
+          ...current,
+          status_message:
+            "The request is still processing. Keep this request ID and refresh the page shortly."
+        }));
+        return;
+      }
+
+      pollTimer.current = setTimeout(() => pollStatus(requestId, attempt + 1), 3000);
+    } catch (statusError) {
+      setSubmitting(false);
+      setRequestState((current) => ({
+        ...current,
+        status: "failed",
+        error_message: statusError.message || "Unable to check the request status."
+      }));
+    }
+  }, [loadSignals]);
+
+  async function submitQuestion(event) {
+    event.preventDefault();
+    if (!turnstileToken) {
+      setRequestState({
+        status: "failed",
+        status_message: "Complete the bot verification before submitting."
+      });
+      return;
+    }
+    clearTimeout(pollTimer.current);
+    setSubmitting(true);
+    setRequestState({ status: "submitting", status_message: "Sending your question…" });
+
+    try {
+      const response = await fetch("/api/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          ...form,
+          turnstile_token: turnstileToken
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || payload.error || "Submission failed.");
+
+      setRequestState(payload);
+      setForm((current) => ({ ...current, business_question: "", website: "" }));
+      pollTimer.current = setTimeout(() => pollStatus(payload.request_id), 1800);
+    } catch (submitError) {
+      setSubmitting(false);
+      setRequestState({
+        status: "failed",
+        status_message: "The question could not be submitted.",
+        error_message: submitError.message || "Submission failed."
+      });
+    } finally {
+      setTurnstileToken("");
+      setTurnstileResetKey((current) => current + 1);
+    }
+  }
 
   const topics = useMemo(
     () => [...new Set(signals.map((signal) => signal.topic).filter(Boolean))].sort(),
@@ -82,18 +216,17 @@ export default function App() {
 
   const filteredSignals = useMemo(() => {
     const query = search.trim().toLowerCase();
-
     return signals.filter((signal) => {
-      const matchesTopic = topic === "all" || signal.topic === topic;
-      const matchesScore = Number(signal.relevance_score || 0) >= minimumScore;
+      const matchesTopic = topicFilter === "all" || signal.topic === topicFilter;
+      const matchesScore = Number(signal.confidence_score || 0) >= minimumScore;
       const searchable = [
         signal.topic,
+        signal.request_type,
         signal.business_question,
-        signal.title,
-        signal.category,
-        signal.summary,
-        signal.why_it_matters,
-        signal.prototype_idea
+        signal.direct_answer,
+        signal.quick_win,
+        signal.ai_opportunity,
+        signal.monetization_note
       ]
         .filter(Boolean)
         .join(" ")
@@ -101,11 +234,35 @@ export default function App() {
 
       return matchesTopic && matchesScore && (!query || searchable.includes(query));
     });
-  }, [signals, search, topic, minimumScore]);
+  }, [signals, search, topicFilter, minimumScore]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredSignals.length / PAGE_SIZE));
+  const pageStart = (currentPage - 1) * PAGE_SIZE;
+  const visibleSignals = filteredSignals.slice(pageStart, pageStart + PAGE_SIZE);
+  const navigationItems = pageItems(currentPage, totalPages);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, topicFilter, minimumScore]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  function changePage(nextPage) {
+    const safePage = Math.min(Math.max(nextPage, 1), totalPages);
+    setCurrentPage(safePage);
+    window.requestAnimationFrame(() => {
+      document.getElementById("answer-feed")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+    });
+  }
 
   const averageScore = signals.length
     ? Math.round(
-        signals.reduce((total, signal) => total + Number(signal.relevance_score || 0), 0) /
+        signals.reduce((total, signal) => total + Number(signal.confidence_score || 0), 0) /
           signals.length
       )
     : 0;
@@ -115,37 +272,30 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="site-header">
-        <a className="brand" href="#top" aria-label="AI Signal Radar home">
+        <a className="brand" href="#top" aria-label="AI Evidence Radar home">
           <span className="brand-mark" aria-hidden="true">◉</span>
-          <span>AI Signal Radar</span>
+          <span>AI Evidence Radar</span>
         </a>
         <nav aria-label="Primary navigation">
-          <a href="#signals">Signals</a>
+          <a href="#ask">Ask</a>
+          <a href="#signals">Answers</a>
           <a href="#workflow">How it works</a>
-          {githubUrl && (
-            <a href={githubUrl} target="_blank" rel="noreferrer">GitHub</a>
-          )}
+          {githubUrl && <a href={githubUrl} target="_blank" rel="noreferrer">GitHub</a>}
         </nav>
       </header>
 
       <main id="top">
         <section className="hero">
           <div className="hero-copy">
-            <p className="hero-kicker">Practical AI discovery, without the jargon</p>
-            <h1>Explore how AI is showing up in real work and everyday life.</h1>
+            <p className="hero-kicker">Practical AI discovery, grounded in relevant sources</p>
+            <h1>AI Evidence Radar turns real-world questions into approachable action plans.</h1>
             <p className="hero-description">
-              AI Signal Radar connects a plain-spoken question to a recent example,
-              explains why it matters, and suggests a small project worth trying.
+              AI Evidence Radar searches the web for material that directly relates to your question,
+              evaluates the strength of the match, and separates practical advice from optional ways AI could assist.
             </p>
             <div className="hero-actions">
-              {formUrl ? (
-                <a className="primary-button" href={formUrl} target="_blank" rel="noreferrer">
-                  Ask a practical AI question
-                </a>
-              ) : (
-                <a className="primary-button" href="#signals">Explore the signals</a>
-              )}
-              <a className="secondary-button" href="#workflow">See the workflow</a>
+              <a className="primary-button" href="#ask">Ask a practical question</a>
+              <a className="secondary-button" href="#signals">Explore completed answers</a>
             </div>
           </div>
           <div className="radar-visual" aria-hidden="true">
@@ -160,34 +310,118 @@ export default function App() {
           </div>
         </section>
 
+        <section className="ask-section" id="ask">
+          <div className="section-heading narrow-heading">
+            <div>
+              <p className="eyebrow">Instant webhook intake</p>
+              <h2>What would you like to understand or build?</h2>
+              <p>Use ordinary language. The system will not force an unrelated source to fit your question.</p>
+            </div>
+          </div>
+
+          <div className="ask-grid">
+            <form className="question-form" onSubmit={submitQuestion}>
+              <label>
+                <span>Practical area</span>
+                <select
+                  value={form.topic}
+                  onChange={(event) => setForm({ ...form, topic: event.target.value })}
+                  disabled={submitting}
+                >
+                  {TOPICS.map((item) => <option key={item}>{item}</option>)}
+                </select>
+              </label>
+
+              <label>
+                <span>What kind of help are you looking for?</span>
+                <select
+                  value={form.request_type}
+                  onChange={(event) => setForm({ ...form, request_type: event.target.value })}
+                  disabled={submitting}
+                >
+                  {REQUEST_TYPES.map((item) => <option key={item}>{item}</option>)}
+                </select>
+              </label>
+
+              <label>
+                <span>Your question</span>
+                <textarea
+                  value={form.business_question}
+                  onChange={(event) => setForm({ ...form, business_question: event.target.value })}
+                  minLength={15}
+                  maxLength={700}
+                  required
+                  disabled={submitting}
+                  placeholder="For example: How should I promote a webcomic, grow readership, and introduce a paid membership after a free first season?"
+                />
+                <small>{form.business_question.length}/700 characters</small>
+              </label>
+
+              <label className="honeypot" aria-hidden="true">
+                <span>Website</span>
+                <input
+                  tabIndex="-1"
+                  autoComplete="off"
+                  value={form.website}
+                  onChange={(event) => setForm({ ...form, website: event.target.value })}
+                />
+              </label>
+
+              <TurnstileWidget
+                key={turnstileResetKey}
+                siteKey={turnstileSiteKey}
+                onToken={setTurnstileToken}
+              />
+              <button className="primary-button form-button" type="submit" disabled={submitting || !turnstileToken || !turnstileSiteKey}>
+                {submitting ? "Preparing your answer…" : "Submit question"}
+              </button>
+            </form>
+
+            <aside className="request-status" aria-live="polite">
+              <h3>Request status</h3>
+              {requestState ? (
+                <>
+                  <span className={`status-badge status-${requestState.status || "queued"}`}>
+                    {(requestState.status || "queued").replaceAll("_", " ")}
+                  </span>
+                  <p>{requestState.status_message || requestState.message}</p>
+                  {requestState.request_id && (
+                    <p className="request-id">Request ID: <code>{requestState.request_id}</code></p>
+                  )}
+                  {requestState.error_message && <p className="status-error">{requestState.error_message}</p>}
+                </>
+              ) : (
+                <p>Your progress will appear here after you submit a question.</p>
+              )}
+            </aside>
+          </div>
+        </section>
+
         {meta?.source === "sample" && (
           <div className="notice" role="status">
-            <strong>Sample data mode:</strong> add your published Google Sheets CSV URL to
-            <code>SHEET_CSV_URL</code> to display live workflow results.
+            <strong>Sample data mode:</strong> add the V2 CSV and Make webhook environment variables to display live workflow results.
           </div>
         )}
 
         <section className="metrics" aria-label="Dashboard summary">
-          <MetricCard label="Completed signals" value={signals.length} detail="Practical examples collected" />
-          <MetricCard label="Average usefulness" value={`${averageScore}/100`} detail="Across current results" />
+          <MetricCard label="Completed answers" value={signals.length} detail="Source-evaluated practical results" />
+          <MetricCard label="Average confidence" value={`${averageScore}/100`} detail="Across retained source matches" />
           <MetricCard label="Areas explored" value={topics.length} detail="Work, life and industry topics" />
           <MetricCard
-            label="Newest signal"
-            value={newestSignal ? formatDate(newestSignal.created_at || newestSignal.published_at) : "—"}
-            detail={newestSignal?.category || "Waiting for the first result"}
+            label="Newest answer"
+            value={newestSignal ? formatDate(newestSignal.created_at) : "—"}
+            detail={newestSignal?.request_type || "Waiting for the first result"}
           />
         </section>
 
         <section className="signals-section" id="signals">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Live discovery feed</p>
-              <h2>Practical AI signals</h2>
-              <p>Search the examples, narrow the topic, or raise the minimum usefulness score.</p>
+              <p className="eyebrow">Grounded answer feed</p>
+              <h2>Practical AI answers</h2>
+              <p>Search completed questions or raise the minimum source-confidence score.</p>
             </div>
-            {meta?.fetched_at && (
-              <p className="sync-label">Updated {formatDate(meta.fetched_at)}</p>
-            )}
+            {meta?.fetched_at && <p className="sync-label">Updated {formatDate(meta.fetched_at)}</p>}
           </div>
 
           <div className="filters">
@@ -197,77 +431,111 @@ export default function App() {
                 type="search"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Try customer service, music, job search…"
+                placeholder="Try webcomic, customer service, job search…"
               />
             </label>
             <label>
               <span>Area</span>
-              <select value={topic} onChange={(event) => setTopic(event.target.value)}>
+              <select value={topicFilter} onChange={(event) => setTopicFilter(event.target.value)}>
                 <option value="all">All practical areas</option>
-                {topics.map((item) => (
-                  <option key={item} value={item}>{item}</option>
-                ))}
+                {topics.map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
             </label>
             <label>
-              <span>Minimum usefulness</span>
-              <select
-                value={minimumScore}
-                onChange={(event) => setMinimumScore(Number(event.target.value))}
-              >
+              <span>Minimum confidence</span>
+              <select value={minimumScore} onChange={(event) => setMinimumScore(Number(event.target.value))}>
                 <option value={0}>Any score</option>
-                <option value={60}>60 and above</option>
+                <option value={45}>45 and above</option>
                 <option value={75}>75 and above</option>
                 <option value={85}>85 and above</option>
               </select>
             </label>
           </div>
 
-          {loading && <div className="state-card">Loading practical AI signals…</div>}
-
-          {error && (
-            <div className="state-card error-card" role="alert">
-              <h3>The dashboard could not load its data.</h3>
-              <p>{error}</p>
+          {!loading && !error && filteredSignals.length > 0 && (
+            <div className="results-toolbar" id="answer-feed">
               <p>
-                Confirm that <code>SHEET_CSV_URL</code> contains the published CSV link for
-                the <code>Public_Signals</code> worksheet.
+                Showing <strong>{pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filteredSignals.length)}</strong> of {" "}
+                <strong>{filteredSignals.length}</strong> answers
               </p>
+              <p>Page {currentPage} of {totalPages}</p>
             </div>
           )}
 
-          {!loading && !error && filteredSignals.length === 0 && (
-            <div className="state-card">
-              No signals match the current filters. Try a broader search or lower score.
+          {loading && <div className="state-card">Loading practical AI answers…</div>}
+          {error && (
+            <div className="state-card error-card" role="alert">
+              <h3>The dashboard could not load its V2 data.</h3>
+              <p>{error}</p>
+              <p>Confirm that <code>PUBLIC_SIGNALS_V2_CSV_URL</code> contains the published V2 signals CSV link.</p>
             </div>
+          )}
+          {!loading && !error && filteredSignals.length === 0 && (
+            <div className="state-card">No answers match the current filters.</div>
           )}
 
           <div className="signal-grid">
-            {filteredSignals.map((signal, index) => (
-              <SignalCard
-                key={`${signal.source_url}-${index}`}
-                signal={signal}
-                formatDate={formatDate}
-              />
+            {visibleSignals.map((signal) => (
+              <SignalCard key={signal.request_id} signal={signal} formatDate={formatDate} />
             ))}
           </div>
+
+          {!loading && !error && totalPages > 1 && (
+            <nav className="pagination" aria-label="Completed answer pages">
+              <button
+                type="button"
+                className="pagination-button pagination-direction"
+                onClick={() => changePage(currentPage - 1)}
+                disabled={currentPage === 1}
+              >
+                ← Previous
+              </button>
+
+              <div className="pagination-pages">
+                {navigationItems.map((item) =>
+                  typeof item === "number" ? (
+                    <button
+                      type="button"
+                      key={item}
+                      className="pagination-button pagination-number"
+                      aria-current={item === currentPage ? "page" : undefined}
+                      onClick={() => changePage(item)}
+                    >
+                      {item}
+                    </button>
+                  ) : (
+                    <span className="pagination-ellipsis" key={item} aria-hidden="true">…</span>
+                  )
+                )}
+              </div>
+
+              <button
+                type="button"
+                className="pagination-button pagination-direction"
+                onClick={() => changePage(currentPage + 1)}
+                disabled={currentPage === totalPages}
+              >
+                Next →
+              </button>
+            </nav>
+          )}
         </section>
 
         <section className="workflow-section" id="workflow">
           <div className="section-heading narrow-heading">
             <div>
               <p className="eyebrow">Behind the dashboard</p>
-              <h2>How one question becomes a useful signal</h2>
+              <h2>How one question becomes a source-evaluated answer</h2>
             </div>
           </div>
           <div className="workflow-grid">
             {[
-              ["01", "Ask", "A Zapier form collects a practical topic and a plain-language question."],
-              ["02", "Queue", "Zapier writes the request to Google Sheets with a queued status."],
-              ["03", "Research", "Make searches GDELT for recent real-world examples connected to AI."],
-              ["04", "Explain", "AI Toolkit selects a relevant example and returns structured, beginner-friendly guidance."],
-              ["05", "Store", "Make saves the signal and marks the original request completed."],
-              ["06", "Share", "Zapier emails the completed result and Vercel displays it here."]
+              ["01", "Ask", "The embedded form collects a practical area, help type, and plain-language question."],
+              ["02", "Validate", "A Vercel Function validates the submission and privately calls the Make webhook."],
+              ["03", "Search", "Make immediately sends the actual question to Tavily for ranked web results."],
+              ["04", "Evaluate", "AI Toolkit rejects weak matches and returns a direct structured answer with confidence rules."],
+              ["05", "Store", "Google Sheets records the answer and updates the request lifecycle through native Make Functions switches."],
+              ["06", "Display", "The browser checks request status and displays the completed answer without a six-hour wait."]
             ].map(([number, title, description]) => (
               <article className="workflow-step" key={number}>
                 <span>{number}</span>
@@ -279,18 +547,17 @@ export default function App() {
           <div className="disclosure">
             <h3>Project disclosure</h3>
             <p>
-              This is an AI-assisted portfolio simulation conceived, directed, configured,
-              tested, and deployed as a practical automation demonstration. External article
-              results and AI-generated explanations should be reviewed before being treated as
-              authoritative guidance.
+              This is an AI-assisted portfolio demonstration conceived, directed, configured,
+              tested, and deployed as a practical automation project. Search excerpts and generated
+              guidance should be reviewed before being treated as authoritative professional advice.
             </p>
           </div>
         </section>
       </main>
 
       <footer>
-        <p>AI Signal Radar · Practical AI automation portfolio project</p>
-        <p>Zapier · Google Sheets · Make · GDELT · React · Vercel</p>
+        <p>AI Evidence Radar V2 · Practical, source-evaluated AI automation</p>
+        <p>Vercel · Make · Tavily · Google Sheets · Make AI Toolkit · Zapier email</p>
       </footer>
     </div>
   );
