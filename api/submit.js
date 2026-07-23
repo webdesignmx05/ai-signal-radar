@@ -5,7 +5,9 @@ export async function POST(request) {
     const payload = await request.json();
     const result = await submitRequestV2({
       payload,
-      webhookUrl: process.env.MAKE_WEBHOOK_URL
+      webhookUrl: process.env.MAKE_WEBHOOK_URL,
+      turnstileSecretKey:
+        process.env.TURNSTILE_SECRET_KEY
     });
 
     return Response.json(result, {

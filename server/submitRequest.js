@@ -29,19 +29,104 @@ function validatePayload(payload) {
   const businessQuestion = clean(payload?.business_question);
   const website = clean(payload?.website);
 
+  const turnstileToken = clean(
+    payload?.turnstile_token
+  );
+
   if (website) throw new Error("Submission rejected.");
   if (!TOPICS.has(topic)) throw new Error("Select a valid practical AI area.");
   if (!REQUEST_TYPES.has(requestType)) throw new Error("Select a valid type of help.");
   if (businessQuestion.length < 15) throw new Error("Enter a more complete question.");
   if (businessQuestion.length > 700) throw new Error("Keep the question under 700 characters.");
 
-  return { topic, request_type: requestType, business_question: businessQuestion };
+  if (!turnstileToken) {
+    throw new Error(
+      "Complete the bot verification before submitting."
+    );
+  }
+
+    return {topic,request_type: requestType,business_question: businessQuestion,turnstile_token: turnstileToken  };
 }
 
-export async function submitRequestV2({ payload, webhookUrl } = {}) {
+async function verifyTurnstileToken({
+  token,
+  secretKey
+}) {
+  if (!secretKey) {
+    throw new Error(
+      "TURNSTILE_SECRET_KEY is not configured."
+    );
+  }
+
+  if (!token) {
+    throw new Error(
+      "Complete the bot verification before submitting."
+    );
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    8000
+  );
+
+  try {
+    const response = await fetch(
+      "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          secret: secretKey,
+          response: token
+        }),
+        signal: controller.signal,
+        cache: "no-store"
+      }
+    );
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      console.warn(
+        "Turnstile verification rejected:",
+        result?.["error-codes"] || []
+      );
+
+      throw new Error(
+        "Bot verification failed. Refresh the verification and try again."
+      );
+    }
+
+    return result;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(
+        "Bot verification timed out. Please try again."
+      );
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function submitRequestV2({ payload, webhookUrl, turnstileSecretKey } = {}) {
   if (!webhookUrl) throw new Error("MAKE_WEBHOOK_URL is not configured.");
 
-  const validated = validatePayload(payload);
+  const {
+    turnstile_token: turnstileToken,
+    ...validated
+  } = validatePayload(payload);
+
+  await verifyTurnstileToken({
+    token: turnstileToken,
+    secretKey: turnstileSecretKey
+  });
+  
   const requestId = `v2-${crypto.randomUUID()}`;
   const submittedAt = new Date().toISOString();
 

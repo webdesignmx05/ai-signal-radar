@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MetricCard from "./components/MetricCard.jsx";
 import SignalCard from "./components/SignalCard.jsx";
+import TurnstileWidget from "./components/TurnstileWidget.jsx";
 
 const githubUrl = import.meta.env.VITE_GITHUB_URL || "";
+
+const turnstileSiteKey =
+  import.meta.env.VITE_TURNSTILE_SITE_KEY || "";
 
 const TOPICS = [
   "AI for everyday work and productivity",
@@ -46,6 +50,25 @@ function finalStatus(status) {
   return ["completed", "insufficient_sources", "failed"].includes(status);
 }
 
+const PAGE_SIZE = 6;
+
+function pageItems(currentPage, totalPages) {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const items = [1];
+  const rangeStart = Math.max(2, currentPage - 1);
+  const rangeEnd = Math.min(totalPages - 1, currentPage + 1);
+
+  if (rangeStart > 2) items.push("start-ellipsis");
+  for (let page = rangeStart; page <= rangeEnd; page += 1) items.push(page);
+  if (rangeEnd < totalPages - 1) items.push("end-ellipsis");
+  items.push(totalPages);
+
+  return items;
+}
+
 export default function App() {
   const [signals, setSignals] = useState([]);
   const [meta, setMeta] = useState(null);
@@ -54,6 +77,10 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [topicFilter, setTopicFilter] = useState("all");
   const [minimumScore, setMinimumScore] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0);
+
   const [form, setForm] = useState({
     topic: TOPICS[0],
     request_type: REQUEST_TYPES[0],
@@ -110,6 +137,12 @@ export default function App() {
         } else {
           await loadSignals();
         }
+        setCurrentPage(1);
+        if (payload.signal?.request_id) {
+          window.setTimeout(() => {
+            window.location.hash = `answer-${payload.signal.request_id}`;
+          }, 0);
+        }
         setSubmitting(false);
         return;
       }
@@ -137,6 +170,13 @@ export default function App() {
 
   async function submitQuestion(event) {
     event.preventDefault();
+    if (!turnstileToken) {
+      setRequestState({
+        status: "failed",
+        status_message: "Complete the bot verification before submitting."
+      });
+      return;
+    }
     clearTimeout(pollTimer.current);
     setSubmitting(true);
     setRequestState({ status: "submitting", status_message: "Sending your question…" });
@@ -145,7 +185,10 @@ export default function App() {
       const response = await fetch("/api/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(form)
+        body: JSON.stringify({
+          ...form,
+          turnstile_token: turnstileToken
+        })
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || payload.error || "Submission failed.");
@@ -160,6 +203,9 @@ export default function App() {
         status_message: "The question could not be submitted.",
         error_message: submitError.message || "Submission failed."
       });
+    } finally {
+      setTurnstileToken("");
+      setTurnstileResetKey((current) => current + 1);
     }
   }
 
@@ -190,6 +236,30 @@ export default function App() {
     });
   }, [signals, search, topicFilter, minimumScore]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredSignals.length / PAGE_SIZE));
+  const pageStart = (currentPage - 1) * PAGE_SIZE;
+  const visibleSignals = filteredSignals.slice(pageStart, pageStart + PAGE_SIZE);
+  const navigationItems = pageItems(currentPage, totalPages);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, topicFilter, minimumScore]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  function changePage(nextPage) {
+    const safePage = Math.min(Math.max(nextPage, 1), totalPages);
+    setCurrentPage(safePage);
+    window.requestAnimationFrame(() => {
+      document.getElementById("answer-feed")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+    });
+  }
+
   const averageScore = signals.length
     ? Math.round(
         signals.reduce((total, signal) => total + Number(signal.confidence_score || 0), 0) /
@@ -202,9 +272,9 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="site-header">
-        <a className="brand" href="#top" aria-label="AI Signal Radar home">
+        <a className="brand" href="#top" aria-label="AI Evidence Radar home">
           <span className="brand-mark" aria-hidden="true">◉</span>
-          <span>AI Signal Radar</span>
+          <span>AI Evidence Radar</span>
         </a>
         <nav aria-label="Primary navigation">
           <a href="#ask">Ask</a>
@@ -218,9 +288,9 @@ export default function App() {
         <section className="hero">
           <div className="hero-copy">
             <p className="hero-kicker">Practical AI discovery, grounded in relevant sources</p>
-            <h1>Ask a real-world question and get an approachable action plan.</h1>
+            <h1>AI Evidence Radar turns real-world questions into approachable action plans.</h1>
             <p className="hero-description">
-              AI Signal Radar searches the web for material that directly relates to your question,
+              AI Evidence Radar searches the web for material that directly relates to your question,
               evaluates the strength of the match, and separates practical advice from optional ways AI could assist.
             </p>
             <div className="hero-actions">
@@ -297,7 +367,12 @@ export default function App() {
                 />
               </label>
 
-              <button className="primary-button form-button" type="submit" disabled={submitting}>
+              <TurnstileWidget
+                key={turnstileResetKey}
+                siteKey={turnstileSiteKey}
+                onToken={setTurnstileToken}
+              />
+              <button className="primary-button form-button" type="submit" disabled={submitting || !turnstileToken || !turnstileSiteKey}>
                 {submitting ? "Preparing your answer…" : "Submit question"}
               </button>
             </form>
@@ -377,6 +452,16 @@ export default function App() {
             </label>
           </div>
 
+          {!loading && !error && filteredSignals.length > 0 && (
+            <div className="results-toolbar" id="answer-feed">
+              <p>
+                Showing <strong>{pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filteredSignals.length)}</strong> of {" "}
+                <strong>{filteredSignals.length}</strong> answers
+              </p>
+              <p>Page {currentPage} of {totalPages}</p>
+            </div>
+          )}
+
           {loading && <div className="state-card">Loading practical AI answers…</div>}
           {error && (
             <div className="state-card error-card" role="alert">
@@ -390,10 +475,50 @@ export default function App() {
           )}
 
           <div className="signal-grid">
-            {filteredSignals.map((signal) => (
+            {visibleSignals.map((signal) => (
               <SignalCard key={signal.request_id} signal={signal} formatDate={formatDate} />
             ))}
           </div>
+
+          {!loading && !error && totalPages > 1 && (
+            <nav className="pagination" aria-label="Completed answer pages">
+              <button
+                type="button"
+                className="pagination-button pagination-direction"
+                onClick={() => changePage(currentPage - 1)}
+                disabled={currentPage === 1}
+              >
+                ← Previous
+              </button>
+
+              <div className="pagination-pages">
+                {navigationItems.map((item) =>
+                  typeof item === "number" ? (
+                    <button
+                      type="button"
+                      key={item}
+                      className="pagination-button pagination-number"
+                      aria-current={item === currentPage ? "page" : undefined}
+                      onClick={() => changePage(item)}
+                    >
+                      {item}
+                    </button>
+                  ) : (
+                    <span className="pagination-ellipsis" key={item} aria-hidden="true">…</span>
+                  )
+                )}
+              </div>
+
+              <button
+                type="button"
+                className="pagination-button pagination-direction"
+                onClick={() => changePage(currentPage + 1)}
+                disabled={currentPage === totalPages}
+              >
+                Next →
+              </button>
+            </nav>
+          )}
         </section>
 
         <section className="workflow-section" id="workflow">
@@ -431,7 +556,7 @@ export default function App() {
       </main>
 
       <footer>
-        <p>AI Signal Radar V2 · Practical, source-evaluated AI automation</p>
+        <p>AI Evidence Radar V2 · Practical, source-evaluated AI automation</p>
         <p>Vercel · Make · Tavily · Google Sheets · Make AI Toolkit · Zapier email</p>
       </footer>
     </div>

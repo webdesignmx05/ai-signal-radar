@@ -68,7 +68,9 @@ function localApi(env) {
         try {
           const result = await submitRequestV2({
             payload: await readJsonBody(request),
-            webhookUrl: env.MAKE_WEBHOOK_URL
+            webhookUrl: env.MAKE_WEBHOOK_URL,
+            turnstileSecretKey:
+              env.TURNSTILE_SECRET_KEY
           });
           sendJson(response, 202, result);
         } catch (error) {
