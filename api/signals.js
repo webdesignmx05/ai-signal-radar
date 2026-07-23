@@ -1,9 +1,9 @@
-import { loadSignals } from "../server/loadSignals.js";
+import { loadSignalsV2 } from "../server/v2Data.js";
 
 export async function GET() {
   try {
-    const result = await loadSignals({
-      csvUrl: process.env.SHEET_CSV_URL,
+    const result = await loadSignalsV2({
+      csvUrl: process.env.PUBLIC_SIGNALS_V2_CSV_URL,
       allowSample: process.env.USE_SAMPLE_DATA === "true"
     });
 
@@ -18,16 +18,15 @@ export async function GET() {
       },
       {
         headers: {
-          "Cache-Control": "public, s-maxage=300, stale-while-revalidate=3600"
+          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300"
         }
       }
     );
   } catch (error) {
-    console.error("AI Signal Radar API error:", error);
-
+    console.error("AI Signal Radar V2 signals error:", error);
     return Response.json(
       {
-        error: "Unable to load AI signals.",
+        error: "Unable to load V2 AI signals.",
         detail: error instanceof Error ? error.message : "Unknown error"
       },
       { status: 500 }

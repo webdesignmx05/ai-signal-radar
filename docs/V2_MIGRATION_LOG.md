@@ -49,3 +49,51 @@ echo - Production remains on the main branch. >> docs\\V2\_MIGRATION\_LOG.md
 
 \- Kept the V2 scenario inactive pending search and answer enrichment.
 
+
+
+
+
+\## Phases 3 and 4 - Tavily Search and Grounded Answer Processing
+
+
+
+\- Replaced GDELT with Tavily Advanced Search using the visitor's actual question.
+
+\- Configured five ranked general-search results without raw-content retrieval.
+
+\- Verified that Tavily returned sources meaningfully related to the webcomic promotion and membership question.
+
+\- Added searching and generating lifecycle updates to Topic\_Requests\_V2.
+
+\- Added a grounded Make AI Toolkit prompt with semantic relevance, source-quality, confidence, and insufficient-source rules.
+
+\- Separated the practical answer from optional ways AI could assist.
+
+\- Added structured fields for ordered actions, a quick win, monetization guidance, cautions, and supporting sources.
+
+\- Parsed the AI output through the AI Signal Radar V2 Answer JSON structure.
+
+\- Added completed answer records to AI\_Signals\_V2.
+
+\- Standardized V2 Google Sheets modules to use column headers as stable column IDs.
+
+\- Initially tested Router branches for final status handling, but observed competing final updates despite correctly configured filters.
+
+\- Replaced the Router with a deterministic linear final-status design.
+
+\- Learned that inline switch text is not evaluated when manually typed into an ordinary mapping field.
+
+\- Added two native Make Functions General Functions modules using the visual Switch operation.
+
+\- Make Functions module 31 determines status.
+
+\- Make Functions module 32 determines status\_message.
+
+\- Mapped 31.Result and 32.Result into the final Google Sheets Update a Row module.
+
+\- Verified that strong\_match produced status completed and the message Your practical answer is ready.
+
+\- Preserved workflow match\_status separately from request-processing status.
+
+\- Kept V1 production unchanged while V2 remained inactive during controlled testing.
+

@@ -156,3 +156,35 @@ footer p { margin: 4px; }
   .topic-pill { max-width: 100%; }
   .workflow-grid { grid-template-columns: 1fr; }
 }
+/* Append these rules to the existing src/styles.css file. */
+.ask-section { width: min(1180px, calc(100% - 32px)); margin: 76px auto 0; }
+.ask-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.6fr); gap: 20px; align-items: start; }
+.question-form, .request-status { padding: clamp(22px, 4vw, 32px); border: 1px solid var(--line); border-radius: 24px; background: #fff; box-shadow: 0 16px 38px rgba(82,57,43,0.08); }
+.question-form { display: grid; gap: 18px; }
+.question-form label { display: grid; gap: 8px; color: var(--muted); font-weight: 780; }
+.question-form select, .question-form textarea, .question-form input { width: 100%; border: 1px solid #ddd2c4; border-radius: 12px; background: #fffdfa; color: var(--ink); }
+.question-form select, .question-form input { min-height: 50px; padding: 0 14px; }
+.question-form textarea { min-height: 170px; padding: 14px; resize: vertical; line-height: 1.55; }
+.question-form select:focus, .question-form textarea:focus, .question-form input:focus { outline: 3px solid rgba(103,66,143,0.15); border-color: var(--purple); }
+.question-form small { justify-self: end; font-weight: 650; }
+.form-button { border: 0; cursor: pointer; }
+.form-button:disabled { opacity: 0.7; cursor: wait; }
+.honeypot { position: absolute !important; left: -9999px !important; width: 1px !important; height: 1px !important; overflow: hidden !important; }
+.request-status { min-height: 250px; background: linear-gradient(145deg, #fff, #f5ecfa); }
+.request-status h3 { margin-top: 0; }
+.request-status p { color: var(--muted); line-height: 1.65; }
+.status-badge { display: inline-flex; padding: 7px 11px; border-radius: 999px; font-size: 0.8rem; font-weight: 850; text-transform: capitalize; background: var(--purple-soft); color: var(--purple); }
+.status-completed { background: var(--teal-soft); color: var(--teal); }
+.status-insufficient_sources { background: #fff2cf; color: #8a5a0b; }
+.status-failed { background: var(--coral-soft); color: #a14534; }
+.request-id code { word-break: break-all; }
+.status-error { color: #a14534 !important; font-weight: 750; }
+.action-steps { margin: 8px 0 0; padding-left: 24px; color: #575160; line-height: 1.65; }
+.action-steps li + li { margin-top: 8px; }
+.sources-panel { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
+.sources-panel h4 { margin: 0 0 10px; }
+.sources-panel ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.sources-panel li { display: grid; gap: 3px; }
+.sources-panel a { color: var(--purple); font-weight: 800; text-underline-offset: 3px; }
+.sources-panel span, .sources-panel p { color: var(--muted); font-size: 0.86rem; }
+@media (max-width: 920px) { .ask-grid { grid-template-columns: 1fr; } }
